@@ -587,7 +587,8 @@ class DisTorchMemoryManager:
         if model_to_unload is not None:
             print("=== Unloading Model from Memory ===")
             try:
-                comfy.model_management.unload_model_clones(model_to_unload)
+                # detach() is the correct method on the ModelPatcher object to unload it.
+                model_to_unload.detach()
                 print("Model unloaded successfully.")
             except Exception as e:
                 print(f"Could not unload model: {e}")
@@ -699,7 +700,8 @@ class DisTorchSafeMemoryManager:
         if model_to_unload is not None:
             print("=== Unloading Model from Memory ===")
             try:
-                comfy.model_management.unload_model_clones(model_to_unload)
+                # detach() is the correct method on the ModelPatcher object to unload it.
+                model_to_unload.detach()
                 print("Model unloaded successfully.")
             except Exception as e:
                 print(f"Could not unload model: {e}")
