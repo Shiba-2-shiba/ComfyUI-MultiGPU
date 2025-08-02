@@ -565,20 +565,33 @@ class DisTorchMemoryCleaner:
 class DisTorchMemoryManager:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required": {
-            "latent": ("LATENT",),
-            "clean_gpu": ("BOOLEAN", {"default": True}),
-            "clean_cpu": ("BOOLEAN", {"default": False, "tooltip": "CPU memory cleanup (use with caution)"}),
-            "force_gc": ("BOOLEAN", {"default": True}),
-            "reset_virtual_memory": ("BOOLEAN", {"default": True}),
-            "restore_original_functions": ("BOOLEAN", {"default": False, "tooltip": "Restore original model_management functions (EXPERIMENTAL)"}),
-        }}
+        return {
+            "required": {
+                "latent": ("LATENT",),
+                "clean_gpu": ("BOOLEAN", {"default": True}),
+                "clean_cpu": ("BOOLEAN", {"default": False, "tooltip": "CPU memory cleanup (use with caution)"}),
+                "force_gc": ("BOOLEAN", {"default": True}),
+                "reset_virtual_memory": ("BOOLEAN", {"default": True}),
+                "restore_original_functions": ("BOOLEAN", {"default": False, "tooltip": "Restore original model_management functions (EXPERIMENTAL)"}),
+            },
+            "optional": {
+                "model_to_unload": ("MODEL",),
+            }
+        }
     
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "manage_memory"
     CATEGORY = "DisTorch"
 
-    def manage_memory(self, latent, clean_gpu, clean_cpu, force_gc, reset_virtual_memory, restore_original_functions):
+    def manage_memory(self, latent, clean_gpu, clean_cpu, force_gc, reset_virtual_memory, restore_original_functions, model_to_unload=None):
+        if model_to_unload is not None:
+            print("=== Unloading Model from Memory ===")
+            try:
+                comfy.model_management.unload_model_clones(model_to_unload)
+                print("Model unloaded successfully.")
+            except Exception as e:
+                print(f"Could not unload model: {e}")
+
         import torch
         import gc
         import psutil
@@ -666,18 +679,31 @@ class DisTorchMemoryManager:
 class DisTorchSafeMemoryManager:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required": {
-            "latent": ("LATENT",),
-            "clean_gpu": ("BOOLEAN", {"default": True}),
-            "force_gc": ("BOOLEAN", {"default": True}),
-            "reset_virtual_memory": ("BOOLEAN", {"default": True}),
-        }}
+        return {
+            "required": {
+                "latent": ("LATENT",),
+                "clean_gpu": ("BOOLEAN", {"default": True}),
+                "force_gc": ("BOOLEAN", {"default": True}),
+                "reset_virtual_memory": ("BOOLEAN", {"default": True}),
+            },
+            "optional": {
+                "model_to_unload": ("MODEL",),
+            }
+        }
     
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "safe_manage_memory"
     CATEGORY = "DisTorch"
 
-    def safe_manage_memory(self, latent, clean_gpu, force_gc, reset_virtual_memory):
+    def safe_manage_memory(self, latent, clean_gpu, force_gc, reset_virtual_memory, model_to_unload=None):
+        if model_to_unload is not None:
+            print("=== Unloading Model from Memory ===")
+            try:
+                comfy.model_management.unload_model_clones(model_to_unload)
+                print("Model unloaded successfully.")
+            except Exception as e:
+                print(f"Could not unload model: {e}")
+
         import torch
         import gc
         import comfy.model_management
