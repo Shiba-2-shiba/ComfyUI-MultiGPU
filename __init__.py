@@ -532,24 +532,32 @@ class DisTorchMemoryCleaner:
     def clean_memory(self, latent):
         import torch
         import gc
+        import comfy.model_management
         
         # GPUメモリのクリア
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-        
+            try:
+                # Iterate over all available CUDA devices and clear cache
+                for i in range(torch.cuda.device_count()):
+                    with torch.cuda.device(f'cuda:{i}'):
+                        torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                print("All GPU caches cleared")
+            except Exception as e:
+                print(f"GPU cache clear failed: {e}")
+
         # Pythonのガベージコレクション
         gc.collect()
         
         # DisTorchの仮想メモリを解放
-        try:
-            import comfy.model_management
-            # 仮想メモリの割り当てをリセット
-            if hasattr(comfy.model_management, 'free_memory'):
-                comfy.model_management.free_memory(0, 'cuda:0')
-                comfy.model_management.free_memory(0, 'cpu')
-        except:
-            pass
+        if hasattr(comfy.model_management, 'free_memory'):
+            try:
+                # Iterate over all available CUDA devices
+                for i in range(torch.cuda.device_count()):
+                    comfy.model_management.free_memory(0, f'cuda:{i}')
+                print("DisTorch virtual memory reset for all CUDA devices")
+            except Exception as e:
+                print(f"DisTorch virtual memory reset failed: {e}")
         
         print("DisTorch memory cleaned")
         return (latent,)
@@ -574,6 +582,7 @@ class DisTorchMemoryManager:
         import torch
         import gc
         import psutil
+        import comfy.model_management
         
         print("=== DisTorch Memory Management ===")
         
@@ -589,12 +598,15 @@ class DisTorchMemoryManager:
         # GPUメモリのクリア
         if clean_gpu and torch.cuda.is_available():
             try:
-                torch.cuda.empty_cache()
+                # Iterate over all available CUDA devices and clear cache
+                for i in range(torch.cuda.device_count()):
+                    with torch.cuda.device(f'cuda:{i}'):
+                        torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-                print("GPU cache cleared")
+                print("All GPU caches cleared")
             except Exception as e:
                 print(f"GPU cache clear failed: {e}")
-        
+
         # CPUメモリのクリア（UI破損対策済み）
         if clean_cpu:
             try:
@@ -612,15 +624,14 @@ class DisTorchMemoryManager:
                 print(f"Garbage collection failed: {e}")
         
         # DisTorchの仮想メモリをリセット
-        if reset_virtual_memory:
+        if reset_virtual_memory and hasattr(comfy.model_management, 'free_memory'):
             try:
-                import comfy.model_management
-                if hasattr(comfy.model_management, 'free_memory'):
-                    comfy.model_management.free_memory(0, 'cuda:0')
-                    comfy.model_management.free_memory(0, 'cpu')
-                print("Virtual memory reset")
+                # Iterate over all available CUDA devices
+                for i in range(torch.cuda.device_count()):
+                    comfy.model_management.free_memory(0, f'cuda:{i}')
+                print("DisTorch virtual memory reset for all CUDA devices")
             except Exception as e:
-                print(f"Virtual memory reset failed: {e}")
+                print(f"DisTorch virtual memory reset failed: {e}")
         
         # メモリ使用量の表示（後）
         if torch.cuda.is_available():
@@ -669,6 +680,7 @@ class DisTorchSafeMemoryManager:
     def safe_manage_memory(self, latent, clean_gpu, force_gc, reset_virtual_memory):
         import torch
         import gc
+        import comfy.model_management
         
         print("=== DisTorch Safe Memory Management ===")
         
@@ -681,9 +693,12 @@ class DisTorchSafeMemoryManager:
         # GPUメモリのクリア（UIに影響しない）
         if clean_gpu and torch.cuda.is_available():
             try:
-                torch.cuda.empty_cache()
+                # Iterate over all available CUDA devices and clear cache
+                for i in range(torch.cuda.device_count()):
+                    with torch.cuda.device(f'cuda:{i}'):
+                        torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-                print("GPU cache cleared")
+                print("All GPU caches cleared")
             except Exception as e:
                 print(f"GPU cache clear failed: {e}")
         
@@ -696,15 +711,14 @@ class DisTorchSafeMemoryManager:
                 print(f"Garbage collection failed: {e}")
         
         # DisTorchの仮想メモリをリセット
-        if reset_virtual_memory:
+        if reset_virtual_memory and hasattr(comfy.model_management, 'free_memory'):
             try:
-                import comfy.model_management
-                if hasattr(comfy.model_management, 'free_memory'):
-                    comfy.model_management.free_memory(0, 'cuda:0')
-                    comfy.model_management.free_memory(0, 'cpu')
-                print("Virtual memory reset")
+                # Iterate over all available CUDA devices
+                for i in range(torch.cuda.device_count()):
+                    comfy.model_management.free_memory(0, f'cuda:{i}')
+                print("DisTorch virtual memory reset for all CUDA devices")
             except Exception as e:
-                print(f"Virtual memory reset failed: {e}")
+                print(f"DisTorch virtual memory reset failed: {e}")
         
         # メモリ使用量の表示（後）
         if torch.cuda.is_available():
