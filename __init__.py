@@ -12,6 +12,7 @@ import hashlib
 import tempfile
 import subprocess
 import gc
+import psutil # psutilをインポート
 from safetensors.torch import save_file, load_file
 import comfy.utils
 from typing import Dict, List 
@@ -34,6 +35,10 @@ from .nodes import (
 current_device = mm.get_torch_device()
 current_text_encoder_device = mm.text_encoder_device()
 model_allocation_store = {}
+
+# 元の関数を保存（復元機能のために追加）
+original_get_torch_device = mm.get_torch_device
+original_text_encoder_device = mm.text_encoder_device
 
 def get_torch_device_patched():
     device = None
@@ -511,6 +516,211 @@ class MergeFluxLoRAsQuantizeAndLoad:
                 os.unlink(final_path)
             return result
 
+# --- ここから記事に基づくメモリ管理ノードを追加 ---
+
+class DisTorchMemoryCleaner:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "latent": ("LATENT",),
+        }}
+    
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "clean_memory"
+    CATEGORY = "DisTorch"
+
+    def clean_memory(self, latent):
+        import torch
+        import gc
+        
+        # GPUメモリのクリア
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
+        # Pythonのガベージコレクション
+        gc.collect()
+        
+        # DisTorchの仮想メモリを解放
+        try:
+            import comfy.model_management
+            # 仮想メモリの割り当てをリセット
+            if hasattr(comfy.model_management, 'free_memory'):
+                comfy.model_management.free_memory(0, 'cuda:0')
+                comfy.model_management.free_memory(0, 'cpu')
+        except:
+            pass
+        
+        print("DisTorch memory cleaned")
+        return (latent,)
+
+class DisTorchMemoryManager:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "latent": ("LATENT",),
+            "clean_gpu": ("BOOLEAN", {"default": True}),
+            "clean_cpu": ("BOOLEAN", {"default": False, "tooltip": "CPU memory cleanup (use with caution)"}),
+            "force_gc": ("BOOLEAN", {"default": True}),
+            "reset_virtual_memory": ("BOOLEAN", {"default": True}),
+            "restore_original_functions": ("BOOLEAN", {"default": False, "tooltip": "Restore original model_management functions (EXPERIMENTAL)"}),
+        }}
+    
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "manage_memory"
+    CATEGORY = "DisTorch"
+
+    def manage_memory(self, latent, clean_gpu, clean_cpu, force_gc, reset_virtual_memory, restore_original_functions):
+        import torch
+        import gc
+        import psutil
+        
+        print("=== DisTorch Memory Management ===")
+        
+        # メモリ使用量の表示（前）
+        gpu_memory_before = 0
+        if torch.cuda.is_available():
+            gpu_memory_before = torch.cuda.memory_allocated() / 1024**3
+            print(f"GPU Memory before: {gpu_memory_before:.2f} GB")
+        
+        cpu_memory_before = psutil.virtual_memory().used / 1024**3
+        print(f"CPU Memory before: {cpu_memory_before:.2f} GB")
+        
+        # GPUメモリのクリア
+        if clean_gpu and torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                print("GPU cache cleared")
+            except Exception as e:
+                print(f"GPU cache clear failed: {e}")
+        
+        # CPUメモリのクリア（UI破損対策済み）
+        if clean_cpu:
+            try:
+                collected = gc.collect()
+                print(f"CPU memory cleanup: {collected} objects collected")
+            except Exception as e:
+                print(f"CPU memory cleanup failed: {e}")
+        
+        # ガベージコレクション
+        if force_gc:
+            try:
+                collected = gc.collect()
+                print(f"Garbage collected: {collected} objects")
+            except Exception as e:
+                print(f"Garbage collection failed: {e}")
+        
+        # DisTorchの仮想メモリをリセット
+        if reset_virtual_memory:
+            try:
+                import comfy.model_management
+                if hasattr(comfy.model_management, 'free_memory'):
+                    comfy.model_management.free_memory(0, 'cuda:0')
+                    comfy.model_management.free_memory(0, 'cpu')
+                print("Virtual memory reset")
+            except Exception as e:
+                print(f"Virtual memory reset failed: {e}")
+        
+        # メモリ使用量の表示（後）
+        if torch.cuda.is_available():
+            try:
+                gpu_memory_after = torch.cuda.memory_allocated() / 1024**3
+                gpu_freed = gpu_memory_before - gpu_memory_after
+                print(f"GPU Memory after: {gpu_memory_after:.2f} GB (freed: {gpu_freed:.2f} GB)")
+            except Exception as e:
+                print(f"GPU memory measurement failed: {e}")
+        
+        try:
+            cpu_memory_after = psutil.virtual_memory().used / 1024**3
+            cpu_freed = cpu_memory_before - cpu_memory_after
+            print(f"CPU Memory after: {cpu_memory_after:.2f} GB (freed: {cpu_freed:.2f} GB)")
+        except Exception as e:
+            print(f"CPU memory measurement failed: {e}")
+        
+        # 元の関数を復元（オプション）
+        if restore_original_functions:
+            try:
+                global original_get_torch_device, original_text_encoder_device
+                mm.get_torch_device = original_get_torch_device
+                mm.text_encoder_device = original_text_encoder_device
+                print("Original model_management functions restored")
+            except Exception as e:
+                print(f"Failed to restore original functions: {e}")
+        
+        print("=== Memory Management Complete ===")
+        
+        return (latent,)
+
+class DisTorchSafeMemoryManager:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "latent": ("LATENT",),
+            "clean_gpu": ("BOOLEAN", {"default": True}),
+            "force_gc": ("BOOLEAN", {"default": True}),
+            "reset_virtual_memory": ("BOOLEAN", {"default": True}),
+        }}
+    
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "safe_manage_memory"
+    CATEGORY = "DisTorch"
+
+    def safe_manage_memory(self, latent, clean_gpu, force_gc, reset_virtual_memory):
+        import torch
+        import gc
+        
+        print("=== DisTorch Safe Memory Management ===")
+        
+        # メモリ使用量の表示
+        gpu_memory_before = 0
+        if torch.cuda.is_available():
+            gpu_memory_before = torch.cuda.memory_allocated() / 1024**3
+            print(f"GPU Memory before: {gpu_memory_before:.2f} GB")
+        
+        # GPUメモリのクリア（UIに影響しない）
+        if clean_gpu and torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                print("GPU cache cleared")
+            except Exception as e:
+                print(f"GPU cache clear failed: {e}")
+        
+        # ガベージコレクション（UIに影響しない）
+        if force_gc:
+            try:
+                collected = gc.collect()
+                print(f"Garbage collected: {collected} objects")
+            except Exception as e:
+                print(f"Garbage collection failed: {e}")
+        
+        # DisTorchの仮想メモリをリセット
+        if reset_virtual_memory:
+            try:
+                import comfy.model_management
+                if hasattr(comfy.model_management, 'free_memory'):
+                    comfy.model_management.free_memory(0, 'cuda:0')
+                    comfy.model_management.free_memory(0, 'cpu')
+                print("Virtual memory reset")
+            except Exception as e:
+                print(f"Virtual memory reset failed: {e}")
+        
+        # メモリ使用量の表示（後）
+        if torch.cuda.is_available():
+            try:
+                gpu_memory_after = torch.cuda.memory_allocated() / 1024**3
+                gpu_freed = gpu_memory_before - gpu_memory_after
+                print(f"GPU Memory after: {gpu_memory_after:.2f} GB (freed: {gpu_freed:.2f} GB)")
+            except Exception as e:
+                print(f"GPU memory measurement failed: {e}")
+        
+        print("=== Safe Memory Management Complete ===")
+        
+        return (latent,)
+
+# --- ここまで ---
+
 
 def override_class(cls):
     class NodeOverride(cls):
@@ -684,11 +894,16 @@ def check_module_exists(module_path):
 NODE_CLASS_MAPPINGS = {
     "DeviceSelectorMultiGPU": DeviceSelectorMultiGPU,
     "HunyuanVideoEmbeddingsAdapter": HunyuanVideoEmbeddingsAdapter,
+    # --- 新しいメモリ管理ノードを登録 ---
+    "DisTorchMemoryCleaner": DisTorchMemoryCleaner,
+    "DisTorchMemoryManager": DisTorchMemoryManager,
+    "DisTorchSafeMemoryManager": DisTorchSafeMemoryManager,
 }
 
 NODE_CLASS_MAPPINGS["MergeFluxLoRAsQuantizeAndLoaddMultiGPU"] = override_class(MergeFluxLoRAsQuantizeAndLoad)
 
 NODE_CLASS_MAPPINGS["UNETLoaderMultiGPU"] = override_class(GLOBAL_NODE_CLASS_MAPPINGS["UNETLoader"])
+NODE_CLASS_MAPPINGS["UNETLoaderDisTorchMultiGPU"] = override_class_with_distorch(GLOBAL_NODE_CLASS_MAPPINGS["UNETLoader"])
 NODE_CLASS_MAPPINGS["VAELoaderMultiGPU"] = override_class(GLOBAL_NODE_CLASS_MAPPINGS["VAELoader"])
 NODE_CLASS_MAPPINGS["CLIPLoaderMultiGPU"] = override_class_clip(GLOBAL_NODE_CLASS_MAPPINGS["CLIPLoader"])
 NODE_CLASS_MAPPINGS["DualCLIPLoaderMultiGPU"] = override_class_clip(GLOBAL_NODE_CLASS_MAPPINGS["DualCLIPLoader"])
